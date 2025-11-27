@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NixVixa - Professional Chatbot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        .chat-container { background: white; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); width: 100%; max-width: 800px; height: 80vh; display: flex; flex-direction: column; overflow: hidden; }
+        .chat-header { background: linear-gradient(135deg, #2c3e50, #34495e); color: white; padding: 25px; text-align: center; }
+        .chat-header h1 { font-size: 24px; margin-bottom: 5px; font-weight: 600; }
+        .chat-header p { opacity: 0.9; font-size: 14px; }
+        .chat-messages { flex: 1; padding: 25px; overflow-y: auto; background: #f8f9fa; }
+        .message { margin-bottom: 20px; display: flex; align-items: flex-start; }
+        .user-message { justify-content: flex-end; }
+        .bot-message { justify-content: flex-start; }
+        .message-bubble { max-width: 70%; padding: 15px 20px; border-radius: 18px; line-height: 1.5; font-size: 14px; white-space: pre-line; }
+        .user-message .message-bubble { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-bottom-right-radius: 5px; }
+        .bot-message .message-bubble { background: white; color: #2c3e50; border: 1px solid #e1e5e9; border-bottom-left-radius: 5px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .chat-input-container { padding: 20px; background: white; border-top: 1px solid #e1e5e9; }
+        .chat-input-form { display: flex; gap: 12px; }
+        .chat-input { flex: 1; padding: 15px 20px; border: 2px solid #e1e5e9; border-radius: 25px; font-size: 14px; outline: none; transition: all 0.3s ease; }
+        .chat-input:focus { border-color: #667eea; }
+        .send-button { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 15px 25px; border-radius: 25px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.3s ease; }
+        .send-button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); }
+        .send-button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .typing-indicator { display: none; padding: 15px 20px; background: white; border-radius: 18px; border-bottom-left-radius: 5px; margin-bottom: 20px; color: #7f8c8d; font-style: italic; }
+        .suggestions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
+        .suggestion-chip { background: #e3f2fd; color: #1976d2; padding: 8px 16px; border-radius: 20px; font-size: 12px; cursor: pointer; transition: all 0.3s ease; border: 1px solid #bbdefb; }
+        .suggestion-chip:hover { background: #bbdefb; transform: translateY(-1px); }
+        @media (max-width: 768px) {
+            .chat-container { height: 90vh; border-radius: 15px; }
+            .message-bubble { max-width: 85%; }
+            .chat-header { padding: 20px; }
+            .chat-header h1 { font-size: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>NixVixa Digital Solutions</h1>
+            <p>Professional AI Assistant - Ask me about our services</p>
+        </div>
+
+        <div class="chat-messages" id="chatMessages">
+            <div class="message bot-message">
+                <div class="message-bubble">
+                    Welcome to NixVixa! I'm here to provide information about our digital services, projects, and company expertise. How may I assist you today?
+                </div>
+            </div>
+            
+            <div class="suggestions">
+                <div class="suggestion-chip" onclick="sendSuggestion('What services do you offer?')">Our Services</div>
+                <div class="suggestion-chip" onclick="sendSuggestion('Tell me about your projects')">Projects</div>
+                <div class="suggestion-chip" onclick="sendSuggestion('How to contact you?')">Contact Info</div>
+                <div class="suggestion-chip" onclick="sendSuggestion('About NixVixa')">About Us</div>
+            </div>
+        </div>
+
+        <div class="typing-indicator" id="typingIndicator">
+            NixVixa Assistant is typing...
+        </div>
+
+        <div class="chat-input-container">
+            <form class="chat-input-form" id="chatForm">
+                <input type="text" class="chat-input" id="messageInput" placeholder="Ask about our services, projects, or company..." autocomplete="off">
+                <button type="submit" class="send-button" id="sendButton">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const chatForm = document.getElementById('chatForm');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const typingIndicator = document.getElementById('typingIndicator');
+
+        function addMessage(message, isUser = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            bubbleDiv.textContent = message;
+            messageDiv.appendChild(bubbleDiv);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function showTyping() {
+            typingIndicator.style.display = 'block';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function hideTyping() {
+            typingIndicator.style.display = 'none';
+        }
+
+        async function sendMessage(message) {
+            addMessage(message, true);
+            messageInput.value = '';
+            showTyping();
+            
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
+                });
+                const data = await response.json();
+                hideTyping();
+                if (data.status === 'success') {
+                    addMessage(data.response);
+                } else {
+                    addMessage('Sorry, I encountered an error. Please try again.');
+                }
+            } catch (error) {
+                hideTyping();
+                addMessage('Sorry, there was a connection error. Please try again.');
+            }
+        }
+
+        function sendSuggestion(message) {
+            messageInput.value = message;
+            chatForm.dispatchEvent(new Event('submit'));
+        }
+
+        chatForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const message = messageInput.value.trim();
+            if (message) sendMessage(message);
+        });
+
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatForm.dispatchEvent(new Event('submit'));
+            }
+        });
+
+        messageInput.focus();
+    </script>
+</body>
+</html>
