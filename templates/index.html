@@ -3,144 +3,475 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NixVixa - Professional Chatbot</title>
+    <title>NixVixa Chatbot API</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
-        .chat-container { background: white; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); width: 100%; max-width: 800px; height: 80vh; display: flex; flex-direction: column; overflow: hidden; }
-        .chat-header { background: linear-gradient(135deg, #2c3e50, #34495e); color: white; padding: 25px; text-align: center; }
-        .chat-header h1 { font-size: 24px; margin-bottom: 5px; font-weight: 600; }
-        .chat-header p { opacity: 0.9; font-size: 14px; }
-        .chat-messages { flex: 1; padding: 25px; overflow-y: auto; background: #f8f9fa; }
-        .message { margin-bottom: 20px; display: flex; align-items: flex-start; }
-        .user-message { justify-content: flex-end; }
-        .bot-message { justify-content: flex-start; }
-        .message-bubble { max-width: 70%; padding: 15px 20px; border-radius: 18px; line-height: 1.5; font-size: 14px; white-space: pre-line; }
-        .user-message .message-bubble { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-bottom-right-radius: 5px; }
-        .bot-message .message-bubble { background: white; color: #2c3e50; border: 1px solid #e1e5e9; border-bottom-left-radius: 5px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-        .chat-input-container { padding: 20px; background: white; border-top: 1px solid #e1e5e9; }
-        .chat-input-form { display: flex; gap: 12px; }
-        .chat-input { flex: 1; padding: 15px 20px; border: 2px solid #e1e5e9; border-radius: 25px; font-size: 14px; outline: none; transition: all 0.3s ease; }
-        .chat-input:focus { border-color: #667eea; }
-        .send-button { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 15px 25px; border-radius: 25px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.3s ease; }
-        .send-button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); }
-        .send-button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-        .typing-indicator { display: none; padding: 15px 20px; background: white; border-radius: 18px; border-bottom-left-radius: 5px; margin-bottom: 20px; color: #7f8c8d; font-style: italic; }
-        .suggestions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
-        .suggestion-chip { background: #e3f2fd; color: #1976d2; padding: 8px 16px; border-radius: 20px; font-size: 12px; cursor: pointer; transition: all 0.3s ease; border: 1px solid #bbdefb; }
-        .suggestion-chip:hover { background: #bbdefb; transform: translateY(-1px); }
-        @media (max-width: 768px) {
-            .chat-container { height: 90vh; border-radius: 15px; }
-            .message-bubble { max-width: 85%; }
-            .chat-header { padding: 20px; }
-            .chat-header h1 { font-size: 20px; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 700px;
+            width: 100%;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            color: white;
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+            margin-bottom: 30px;
+        }
+        
+        .chat-test {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .chat-test h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .chat-box {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border: 1px solid #e5e7eb;
+            min-height: 200px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+        
+        .user-message {
+            background: #667eea;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        
+        .bot-message {
+            background: #f3f4f6;
+            color: #333;
+            margin-right: auto;
+            white-space: pre-line;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        input {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            padding: 15px 25px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .quick-btn {
+            padding: 8px 15px;
+            background: white;
+            border: 2px solid #e5e7eb;
+            border-radius: 20px;
+            color: #667eea;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .quick-btn:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        
+        .status {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        
+        .status-item {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #e5e7eb;
+        }
+        
+        .status-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .status-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .status-value.online {
+            color: #10b981;
+        }
+        
+        .footer {
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+        }
+        
+        .endpoints {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+        }
+        
+        .endpoints h4 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+        
+        .endpoint {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #e5e7eb;
+        }
+        
+        .method {
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .url {
+            font-family: 'Courier New', monospace;
+            color: #333;
         }
     </style>
 </head>
 <body>
-    <div class="chat-container">
-        <div class="chat-header">
-            <h1>NixVixa Digital Solutions</h1>
-            <p>Professional AI Assistant - Ask me about our services</p>
+    <div class="container">
+        <div class="header">
+            <div class="logo">N</div>
+            <h1>NixVixa Chatbot</h1>
+            <p class="subtitle">Professional AI Assistant for Digital Solutions</p>
         </div>
-
-        <div class="chat-messages" id="chatMessages">
-            <div class="message bot-message">
-                <div class="message-bubble">
-                    Welcome to NixVixa! I'm here to provide information about our digital services, projects, and company expertise. How may I assist you today?
+        
+        <div class="chat-test">
+            <h3>💬 Live Chat Test</h3>
+            <div class="chat-box" id="chatBox">
+                <div class="message bot-message">
+                    Hello! I'm the NixVixa assistant. Ask me about:
+                    • Our services
+                    • Company information  
+                    • Contact details
+                    • Project portfolio
+                    • Pricing
                 </div>
             </div>
             
-            <div class="suggestions">
-                <div class="suggestion-chip" onclick="sendSuggestion('What services do you offer?')">Our Services</div>
-                <div class="suggestion-chip" onclick="sendSuggestion('Tell me about your projects')">Projects</div>
-                <div class="suggestion-chip" onclick="sendSuggestion('How to contact you?')">Contact Info</div>
-                <div class="suggestion-chip" onclick="sendSuggestion('About NixVixa')">About Us</div>
+            <div class="input-group">
+                <input type="text" id="userInput" placeholder="Type your message here..." 
+                       onkeypress="if(event.key === 'Enter') sendMessage()">
+                <button onclick="sendMessage()">Send</button>
+            </div>
+            
+            <div class="quick-actions">
+                <div class="quick-btn" onclick="quickAction('services')">Our Services</div>
+                <div class="quick-btn" onclick="quickAction('about')">About Company</div>
+                <div class="quick-btn" onclick="quickAction('contact')">Contact Info</div>
+                <div class="quick-btn" onclick="quickAction('projects')">Our Projects</div>
+                <div class="quick-btn" onclick="quickAction('pricing')">Pricing</div>
+                <div class="quick-btn" onclick="quickAction('team')">Our Team</div>
             </div>
         </div>
-
-        <div class="typing-indicator" id="typingIndicator">
-            NixVixa Assistant is typing...
+        
+        <div class="status">
+            <h3>📊 System Status</h3>
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-label">Bot Status</div>
+                    <div class="status-value online" id="botStatus">Online ✅</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">API Version</div>
+                    <div class="status-value" id="apiVersion">2.0.0</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Response Time</div>
+                    <div class="status-value" id="responseTime">-- ms</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Messages Today</div>
+                    <div class="status-value" id="messageCount">0</div>
+                </div>
+            </div>
         </div>
-
-        <div class="chat-input-container">
-            <form class="chat-input-form" id="chatForm">
-                <input type="text" class="chat-input" id="messageInput" placeholder="Ask about our services, projects, or company..." autocomplete="off">
-                <button type="submit" class="send-button" id="sendButton">Send</button>
-            </form>
+        
+        <div class="endpoints">
+            <h4>🔌 API Endpoints</h4>
+            <div class="endpoint">
+                <span class="method">POST</span>
+                <span class="url">/api/chat</span>
+            </div>
+            <div class="endpoint">
+                <span class="method">GET</span>
+                <span class="url">/api/health</span>
+            </div>
+            <div class="endpoint">
+                <span class="method">GET</span>
+                <span class="url">/api/info</span>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>NixVixa Digital Solutions © 2024 | Professional Chatbot API</p>
+            <p>Base URL: <code id="baseUrl"></code></p>
         </div>
     </div>
-
+    
     <script>
-        const chatMessages = document.getElementById('chatMessages');
-        const chatForm = document.getElementById('chatForm');
-        const messageInput = document.getElementById('messageInput');
-        const sendButton = document.getElementById('sendButton');
-        const typingIndicator = document.getElementById('typingIndicator');
-
-        function addMessage(message, isUser = false) {
+        // Set base URL
+        document.getElementById('baseUrl').textContent = window.location.origin;
+        
+        let messageCount = 0;
+        
+        // Initialize chat
+        function addMessage(content, isUser = false) {
+            const chatBox = document.getElementById('chatBox');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
-            const bubbleDiv = document.createElement('div');
-            bubbleDiv.className = 'message-bubble';
-            bubbleDiv.textContent = message;
-            messageDiv.appendChild(bubbleDiv);
-            chatMessages.appendChild(messageDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            messageDiv.textContent = content;
+            chatBox.appendChild(messageDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            
+            if (isUser) {
+                messageCount++;
+                document.getElementById('messageCount').textContent = messageCount;
+            }
         }
-
-        function showTyping() {
-            typingIndicator.style.display = 'block';
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-
-        function hideTyping() {
-            typingIndicator.style.display = 'none';
-        }
-
-        async function sendMessage(message) {
+        
+        // Send message to API
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            // Add user message
             addMessage(message, true);
-            messageInput.value = '';
-            showTyping();
+            input.value = '';
+            
+            // Show typing indicator
+            const chatBox = document.getElementById('chatBox');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message bot-message';
+            typingDiv.textContent = 'Typing...';
+            typingDiv.id = 'typingIndicator';
+            chatBox.appendChild(typingDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            
+            // Start response time measurement
+            const startTime = Date.now();
             
             try {
-                const response = await fetch('/chat', {
+                const response = await fetch('/api/chat', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message })
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message
+                    })
                 });
+                
                 const data = await response.json();
-                hideTyping();
+                
+                // Calculate response time
+                const responseTime = Date.now() - startTime;
+                document.getElementById('responseTime').textContent = `${responseTime} ms`;
+                
+                // Remove typing indicator
+                const typingIndicator = document.getElementById('typingIndicator');
+                if (typingIndicator) {
+                    typingIndicator.remove();
+                }
+                
+                // Add bot response
                 if (data.status === 'success') {
                     addMessage(data.response);
                 } else {
-                    addMessage('Sorry, I encountered an error. Please try again.');
+                    addMessage('Sorry, there was an error processing your request.');
+                }
+                
+            } catch (error) {
+                // Remove typing indicator
+                const typingIndicator = document.getElementById('typingIndicator');
+                if (typingIndicator) {
+                    typingIndicator.remove();
+                }
+                
+                addMessage('Network error. Please check your connection.');
+                console.error('Error:', error);
+            }
+        }
+        
+        // Quick actions
+        function quickAction(action) {
+            const actions = {
+                'services': 'What services do you offer?',
+                'about': 'Tell me about NixVixa',
+                'contact': 'How can I contact you?',
+                'projects': 'Show me your projects',
+                'pricing': 'What are your prices?',
+                'team': 'Tell me about your team'
+            };
+            
+            const input = document.getElementById('userInput');
+            input.value = actions[action];
+            sendMessage();
+        }
+        
+        // Health check on load
+        async function checkHealth() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                
+                if (data.status === 'healthy') {
+                    document.getElementById('botStatus').textContent = 'Online ✅';
+                    document.getElementById('botStatus').className = 'status-value online';
                 }
             } catch (error) {
-                hideTyping();
-                addMessage('Sorry, there was a connection error. Please try again.');
+                document.getElementById('botStatus').textContent = 'Offline ❌';
+                document.getElementById('botStatus').className = 'status-value';
             }
         }
-
-        function sendSuggestion(message) {
-            messageInput.value = message;
-            chatForm.dispatchEvent(new Event('submit'));
-        }
-
-        chatForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            const message = messageInput.value.trim();
-            if (message) sendMessage(message);
-        });
-
-        messageInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                chatForm.dispatchEvent(new Event('submit'));
+        
+        // Load info
+        async function loadInfo() {
+            try {
+                const response = await fetch('/api/info');
+                const data = await response.json();
+                document.getElementById('apiVersion').textContent = data.version;
+            } catch (error) {
+                console.error('Error loading info:', error);
             }
-        });
-
-        messageInput.focus();
+        }
+        
+        // Initialize on page load
+        window.onload = function() {
+            checkHealth();
+            loadInfo();
+            
+            // Focus on input field
+            document.getElementById('userInput').focus();
+        };
+        
+        // Make functions available globally
+        window.sendMessage = sendMessage;
+        window.quickAction = quickAction;
     </script>
 </body>
 </html>

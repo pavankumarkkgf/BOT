@@ -5,339 +5,616 @@ from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import logging
+from typing import List, Tuple, Dict, Any
+import html
+import time
+from urllib.parse import urljoin
+import hashlib
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class WebsiteChatbot:
-    def __init__(self, urls):
-        self.urls = urls if isinstance(urls, list) else [urls]
+    def __init__(self, urls: List[str]):
+        self.urls = urls
         self.chunks = []
-        self.vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
+        self.vectorizer = TfidfVectorizer(
+            stop_words='english', 
+            max_features=5000,
+            ngram_range=(1, 2),
+            min_df=2,
+            max_df=0.8
+        )
         self.tfidf_matrix = None
-        self.service_list = []
-        self.company_info = []
-        self.project_info = []
-        self.contact_info = []
+        self.content_map = {}  # Map chunks to their source URLs
+        self.structured_data = {
+            'services': [],
+            'about': [],
+            'projects': [],
+            'contact': [],
+            'pricing': [],
+            'features': [],
+            'testimonials': [],
+            'faq': []
+        }
+        self.url_content_cache = {}
         
-    def scrape_website(self, url):
-        print(f"🔍 Scraping: {url}")
+    def get_stats(self) -> Dict[str, Any]:
+        """Get statistics about loaded content"""
+        return {
+            'total_urls': len(self.urls),
+            'total_chunks': len(self.chunks),
+            'structured_data': {k: len(v) for k, v in self.structured_data.items()},
+            'vectorizer_vocab_size': len(self.vectorizer.vocabulary_) if hasattr(self.vectorizer, 'vocabulary_') else 0
+        }
+    
+    def scrape_website(self, url: str) -> str:
+        """Scrape and extract content from a URL"""
+        cache_key = hashlib.md5(url.encode()).hexdigest()
+        
+        if cache_key in self.url_content_cache:
+            logger.info(f"📦 Using cached content for: {url}")
+            return self.url_content_cache[cache_key]
+        
+        logger.info(f"🔍 Scraping: {url}")
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
             }
-            response = requests.get(url, headers=headers, timeout=20)
+            
+            response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
+            
+            # Check if content is HTML
+            content_type = response.headers.get('Content-Type', '')
+            if 'text/html' not in content_type:
+                logger.warning(f"⚠️ Non-HTML content at {url}: {content_type}")
+                return ""
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
             # Remove unwanted elements
-            for element in soup.find_all(['nav', 'footer', 'header', 'script', 'style', 'aside']):
-                element.decompose()
+            unwanted_tags = ['nav', 'footer', 'header', 'script', 'style', 'aside', 
+                           'form', 'button', 'input', 'select', 'textarea']
+            for tag in soup.find_all(unwanted_tags):
+                tag.decompose()
             
-            # Extract ALL text content first
-            all_text = soup.get_text(separator=' ', strip=True)
+            # Remove comments
+            for comment in soup.find_all(string=lambda text: isinstance(text, str) and text.startswith('<!--')):
+                comment.extract()
             
-            # Then extract structured information
-            self.extract_structured_info(soup, url)
+            # Extract text with better structure
+            text_parts = []
             
-            return all_text
+            # Prioritize main content areas
+            main_selectors = ['main', 'article', '.content', '#content', '.main-content', 
+                            '.post-content', '.entry-content', '.page-content']
             
+            main_content = None
+            for selector in main_selectors:
+                main_content = soup.select_one(selector)
+                if main_content:
+                    break
+            
+            if main_content:
+                content = main_content
+            else:
+                content = soup.body if soup.body else soup
+            
+            # Extract headings and paragraphs
+            for tag in content.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li', 'div']):
+                if tag.name == 'div' and not tag.get_text(strip=True):
+                    continue
+                    
+                text = tag.get_text(separator=' ', strip=True)
+                if text and len(text) > 10:
+                    # Add heading markers for context
+                    if tag.name.startswith('h'):
+                        text = f"HEADING {tag.name.upper()}: {text}"
+                    text_parts.append(text)
+            
+            # Join all text parts
+            full_text = ' '.join(text_parts)
+            
+            # Clean and normalize
+            full_text = self.clean_text(full_text)
+            
+            # Extract structured information
+            self.extract_structured_info(soup, url, full_text)
+            
+            # Cache the result
+            self.url_content_cache[cache_key] = full_text
+            
+            return full_text
+            
+        except requests.exceptions.Timeout:
+            logger.error(f"⏰ Timeout scraping {url}")
+            return ""
+        except requests.exceptions.RequestException as e:
+            logger.error(f"🌐 Network error scraping {url}: {e}")
+            return ""
         except Exception as e:
-            print(f"❌ Error scraping {url}: {e}")
+            logger.error(f"❌ Error scraping {url}: {str(e)}")
             return ""
     
-    def extract_structured_info(self, soup, url):
-        """Extract specific information from different page types"""
+    def extract_structured_info(self, soup: BeautifulSoup, url: str, full_text: str):
+        """Extract structured information based on URL patterns"""
         url_lower = url.lower()
         
-        # Extract services
-        if 'services' in url_lower:
-            service_elements = soup.find_all(['h1', 'h2', 'h3', 'h4', 'p', 'li', 'div'])
-            for element in service_elements:
-                text = element.get_text(strip=True)
-                if self.is_service_content(text):
-                    self.service_list.append(self.clean_text(text))
+        # Keywords for different content types
+        content_patterns = {
+            'services': ['service', 'offer', 'solution', 'provide', 'expertise', 'capability'],
+            'about': ['about', 'company', 'story', 'mission', 'vision', 'team', 'values'],
+            'projects': ['project', 'portfolio', 'work', 'case study', 'client', 'success story'],
+            'contact': ['contact', 'email', 'phone', 'address', 'location', 'reach us', 'get in touch'],
+            'pricing': ['price', 'cost', 'plan', 'package', 'pricing', 'fee', 'subscription'],
+            'features': ['feature', 'benefit', 'advantage', 'key', 'capability', 'functionality'],
+            'testimonials': ['testimonial', 'review', 'client said', 'customer feedback', 'rating'],
+            'faq': ['faq', 'question', 'answer', 'how to', 'what is', 'why', 'how does']
+        }
         
-        # Extract about info
-        elif 'about' in url_lower:
-            about_elements = soup.find_all(['h1', 'h2', 'h3', 'p'])
-            for element in about_elements:
-                text = element.get_text(strip=True)
-                if len(text) > 30 and self.is_about_content(text):
-                    self.company_info.append(self.clean_text(text))
+        # Extract text from relevant elements
+        for content_type, keywords in content_patterns.items():
+            if any(keyword in url_lower for keyword in keywords):
+                # Extract from specific elements
+                elements = soup.find_all(['p', 'li', 'div', 'span'])
+                for element in elements:
+                    text = element.get_text(strip=True)
+                    if text and len(text) > 20:
+                        text_lower = text.lower()
+                        if any(keyword in text_lower for keyword in keywords):
+                            clean_text = self.clean_text(text)
+                            if clean_text not in self.structured_data[content_type]:
+                                self.structured_data[content_type].append(clean_text)
         
-        # Extract project info
-        elif 'projects' in url_lower or 'portfolio' in url_lower:
-            project_elements = soup.find_all(['h1', 'h2', 'h3', 'p', 'div'])
-            for element in project_elements:
-                text = element.get_text(strip=True)
-                if len(text) > 20 and self.is_project_content(text):
-                    self.project_info.append(self.clean_text(text))
+        # Also extract from full text using patterns
+        self.extract_from_full_text(full_text, url_lower)
+    
+    def extract_from_full_text(self, text: str, url: str):
+        """Extract structured information from full text using regex patterns"""
         
-        # Extract contact info
-        elif 'contact' in url_lower:
-            contact_elements = soup.find_all(['p', 'div', 'span', 'li'])
-            for element in contact_elements:
-                text = element.get_text(strip=True)
-                if self.is_contact_content(text):
-                    self.contact_info.append(self.clean_text(text))
+        # Extract email addresses
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        emails = re.findall(email_pattern, text, re.IGNORECASE)
+        if emails and 'contact' not in url:
+            self.structured_data['contact'].extend([f"Email: {email}" for email in emails[:3]])
+        
+        # Extract phone numbers (international format)
+        phone_pattern = r'(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}'
+        phones = re.findall(phone_pattern, text)
+        if phones and 'contact' not in url:
+            self.structured_data['contact'].extend([f"Phone: {phone[0] if isinstance(phone, tuple) else phone}" 
+                                                   for phone in phones[:2]])
+        
+        # Extract service mentions
+        service_keywords = {
+            'web development': ['website', 'web app', 'frontend', 'backend', 'full stack'],
+            'digital marketing': ['seo', 'social media', 'marketing', 'campaign', 'ads'],
+            'app development': ['mobile app', 'ios', 'android', 'flutter', 'react native'],
+            'branding': ['brand', 'logo', 'identity', 'design system'],
+            'content creation': ['content', 'blog', 'article', 'copywriting'],
+            'ai automation': ['ai', 'artificial intelligence', 'automation', 'machine learning']
+        }
+        
+        for service, keywords in service_keywords.items():
+            if any(keyword in text.lower() for keyword in keywords):
+                if service not in self.structured_data['services']:
+                    self.structured_data['services'].append(service)
     
-    def is_service_content(self, text):
-        text_lower = text.lower()
-        service_keywords = [
-            'web development', 'digital marketing', 'app development', 'branding',
-            'content creation', 'ai automation', 'website', 'mobile app',
-            'seo', 'social media', 'graphic design', 'ui/ux', 'e-commerce'
-        ]
-        return any(keyword in text_lower for keyword in service_keywords) and len(text) > 10
-    
-    def is_about_content(self, text):
-        text_lower = text.lower()
-        about_keywords = ['about', 'company', 'story', 'mission', 'vision', 'team', 'expertise']
-        return any(keyword in text_lower for keyword in about_keywords)
-    
-    def is_project_content(self, text):
-        text_lower = text.lower()
-        project_keywords = ['project', 'portfolio', 'work', 'case study', 'client', 'completed']
-        return any(keyword in text_lower for keyword in project_keywords)
-    
-    def is_contact_content(self, text):
-        text_lower = text.lower()
-        contact_patterns = [
-            r'\b[\w\.-]+@[\w\.-]+\.\w+\b',  # email
-            r'\b\d{10}\b',  # phone number
-            r'\bcontact\b', r'\bemail\b', r'\bphone\b', r'\baddress\b'
-        ]
-        return any(re.search(pattern, text_lower) for pattern in contact_patterns)
-    
-    def clean_text(self, text):
+    def clean_text(self, text: str) -> str:
         """Clean and normalize text"""
-        text = re.sub(r'\s+', ' ', text).strip()
-        text = re.sub(r'[^\w\s\.\!\?\-]', '', text)
-        return text
+        if not text:
+            return ""
+        
+        # Decode HTML entities
+        text = html.unescape(text)
+        
+        # Remove excessive whitespace
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Remove special characters but keep basic punctuation
+        text = re.sub(r'[^\w\s.,!?\-:;()\'"@]', '', text)
+        
+        # Normalize quotes
+        text = text.replace('"', "'").replace('“', "'").replace('”', "'")
+        
+        # Trim and return
+        return text.strip()
     
-    def is_meaningful_content(self, text):
+    def is_meaningful_content(self, text: str) -> bool:
+        """Check if text is meaningful content"""
         if not text or len(text) < 25:
             return False
         
         text_lower = text.lower()
         
+        # Exclude navigation and boilerplate
         excluded_phrases = [
             'privacy policy', 'terms of service', 'copyright', 'all rights reserved',
-            'home', 'menu', 'navigation', 'follow us', 'get in touch', 'click here',
-            'learn more', 'read more', 'subscribe', 'sign up', 'back to top',
-            'cookie', 'login', 'signin'
+            'cookie policy', 'sitemap', 'home', 'menu', 'navigation', 'skip to content',
+            'follow us', 'share this', 'related posts', 'popular tags', 'recent comments',
+            'get in touch', 'click here', 'learn more', 'read more', 'subscribe now',
+            'sign up', 'back to top', 'login', 'register', 'search', 'filter by',
+            'load more', 'view all', 'next page', 'previous page'
         ]
         
         if any(phrase in text_lower for phrase in excluded_phrases):
             return False
-            
-        return len(text.split()) >= 3
+        
+        # Check for sufficient word count
+        words = text.split()
+        if len(words) < 3:
+            return False
+        
+        # Check for meaningful content (not just numbers or symbols)
+        alnum_count = sum(1 for c in text if c.isalnum())
+        if alnum_count / len(text) < 0.5:
+            return False
+        
+        return True
     
-    def split_chunks(self, text, min_len=40):
+    def split_chunks(self, text: str, source_url: str = "", min_len: int = 40, max_len: int = 200) -> List[str]:
+        """Split text into meaningful chunks"""
         if not text:
             return []
-            
+        
+        # Split by sentences
         sentences = re.split(r'(?<=[.!?])\s+', text)
         chunks = []
+        current_chunk = []
+        current_length = 0
         
         for sentence in sentences:
-            clean_sentence = re.sub(r'\s+', ' ', sentence).strip()
-            if len(clean_sentence) >= min_len and self.is_meaningful_content(clean_sentence):
-                chunks.append(clean_sentence)
+            clean_sentence = self.clean_text(sentence)
+            if not clean_sentence or len(clean_sentence) < 10:
+                continue
+                
+            sentence_length = len(clean_sentence.split())
+            
+            if current_length + sentence_length <= max_len and len(current_chunk) < 3:
+                current_chunk.append(clean_sentence)
+                current_length += sentence_length
+            else:
+                if current_chunk and current_length >= min_len:
+                    chunk_text = ' '.join(current_chunk)
+                    if self.is_meaningful_content(chunk_text):
+                        chunks.append(chunk_text)
+                        self.content_map[chunk_text] = source_url
+                
+                current_chunk = [clean_sentence]
+                current_length = sentence_length
+        
+        # Add the last chunk
+        if current_chunk and current_length >= min_len:
+            chunk_text = ' '.join(current_chunk)
+            if self.is_meaningful_content(chunk_text):
+                chunks.append(chunk_text)
+                self.content_map[chunk_text] = source_url
         
         return chunks
     
     def load_data(self):
-        print("\n🔄 Loading website content...")
-        all_chunks = []
+        """Load and process all website data"""
+        logger.info("\n" + "="*60)
+        logger.info("🚀 LOADING WEBSITE CONTENT FOR CHATBOT TRAINING")
+        logger.info("="*60)
         
-        # Process all URLs
-        for url in self.urls:
+        all_chunks = []
+        failed_urls = []
+        
+        for idx, url in enumerate(self.urls, 1):
+            logger.info(f"\n[{idx}/{len(self.urls)}] Processing: {url}")
+            
             try:
                 text = self.scrape_website(url)
                 if text:
-                    chunks = self.split_chunks(text)
-                    print(f"📄 From {url}: {len(chunks)} content pieces")
+                    chunks = self.split_chunks(text, url)
+                    logger.info(f"   ✅ Extracted {len(chunks)} content chunks")
                     all_chunks.extend(chunks)
+                else:
+                    logger.warning(f"   ⚠️ No content extracted")
+                    failed_urls.append(url)
+                    
             except Exception as e:
-                print(f"❌ Error processing {url}: {e}")
+                logger.error(f"   ❌ Error: {str(e)}")
+                failed_urls.append(url)
                 continue
         
-        # Remove duplicates
+        # Remove duplicates while preserving order
         unique_chunks = []
-        seen = set()
+        seen_chunks = set()
         
         for chunk in all_chunks:
-            if chunk and len(chunk) > 30:
-                normalized = re.sub(r'\s+', ' ', chunk).strip().lower()
-                if normalized not in seen:
-                    seen.add(normalized)
-                    unique_chunks.append(chunk)
+            # Normalize for deduplication
+            normalized = re.sub(r'\s+', ' ', chunk).strip().lower()
+            if normalized not in seen_chunks and len(chunk) > 30:
+                seen_chunks.add(normalized)
+                unique_chunks.append(chunk)
         
         self.chunks = unique_chunks
-        print(f"✅ Total content pieces: {len(self.chunks)}")
         
-        # Remove duplicates from structured data
-        self.service_list = list(set(self.service_list))[:15]
-        self.company_info = list(set(self.company_info))[:10]
-        self.project_info = list(set(self.project_info))[:10]
-        self.contact_info = list(set(self.contact_info))[:8]
+        logger.info("\n" + "="*60)
+        logger.info("📊 CONTENT LOADING SUMMARY")
+        logger.info("="*60)
+        logger.info(f"✅ Successfully processed: {len(self.urls) - len(failed_urls)}/{len(self.urls)} URLs")
+        logger.info(f"📝 Total unique content chunks: {len(self.chunks)}")
         
-        print(f"🎯 Services found: {len(self.service_list)}")
-        print(f"🏢 Company info: {len(self.company_info)}")
-        print(f"📁 Project info: {len(self.project_info)}")
-        print(f"📞 Contact info: {len(self.contact_info)}")
+        if failed_urls:
+            logger.info(f"⚠️ Failed URLs: {len(failed_urls)}")
+            for url in failed_urls:
+                logger.info(f"   - {url}")
+        
+        # Log structured data stats
+        logger.info("\n🏗️ STRUCTURED DATA EXTRACTED:")
+        for category, items in self.structured_data.items():
+            if items:
+                logger.info(f"   {category.capitalize()}: {len(items)} items")
+                for item in items[:2]:  # Show first 2 items
+                    logger.info(f"     • {item[:80]}...")
         
         if len(self.chunks) == 0:
-            print("⚠️ No content found.")
-            return
+            logger.error("❌ CRITICAL: No content was loaded!")
+            raise Exception("No content available for chatbot training")
         
-        print("🔧 Creating TF-IDF vectors...")
+        # Create TF-IDF vectors
+        logger.info("\n🔧 Creating TF-IDF vectors...")
         self.tfidf_matrix = self.vectorizer.fit_transform(self.chunks)
-        print("✅ Vectors created successfully\n")
+        logger.info(f"✅ Vocabulary size: {len(self.vectorizer.vocabulary_)}")
+        logger.info("="*60 + "\n")
     
-    def retrieve_top_k(self, query, k=5, min_score=0.15):
+    def retrieve_relevant_chunks(self, query: str, k: int = 7, min_score: float = 0.1) -> List[Tuple[str, float]]:
+        """Retrieve most relevant chunks using cosine similarity"""
         if self.tfidf_matrix is None or len(self.chunks) == 0:
             return []
         
+        # Transform query
         query_vec = self.vectorizer.transform([query])
+        
+        # Calculate similarities
         similarities = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
         
-        top_indices = np.argsort(similarities)[-k*2:][::-1]
+        # Get top indices
+        top_indices = np.argsort(similarities)[-k*3:][::-1]
+        
+        # Filter by minimum score and deduplicate
         results = []
+        seen_content = set()
         
         for idx in top_indices:
             score = float(similarities[idx])
             if score >= min_score:
-                results.append((self.chunks[idx], score))
-        
-        return sorted(results, key=lambda x: x[1], reverse=True)[:k]
-    
-    def get_service_response(self):
-        """Generate comprehensive service response"""
-        if not self.service_list:
-            # Fallback: extract from general content
-            service_keywords = [
-                'web development', 'digital marketing', 'app development', 
-                'branding', 'content creation', 'ai automation'
-            ]
-            found_services = []
+                chunk = self.chunks[idx]
+                # Simple deduplication
+                if chunk not in seen_content:
+                    seen_content.add(chunk)
+                    results.append((chunk, score))
             
+            if len(results) >= k:
+                break
+        
+        return results
+    
+    def generate_service_response(self) -> str:
+        """Generate comprehensive service response"""
+        services = self.structured_data['services']
+        
+        if not services:
+            # Extract from chunks
+            service_keywords = [
+                'web development', 'website development', 'web design',
+                'digital marketing', 'seo', 'social media marketing',
+                'app development', 'mobile app', 'application development',
+                'branding', 'brand identity', 'logo design',
+                'content creation', 'content marketing', 'copywriting',
+                'ai automation', 'artificial intelligence', 'machine learning',
+                'software development', 'ecommerce', 'shopify', 'wordpress'
+            ]
+            
+            found_services = []
             for chunk in self.chunks:
                 chunk_lower = chunk.lower()
-                for service in service_keywords:
-                    if service in chunk_lower and service not in found_services:
-                        found_services.append(service.title())
+                for keyword in service_keywords:
+                    if keyword in chunk_lower and keyword not in found_services:
+                        found_services.append(keyword.title())
             
-            if found_services:
-                self.service_list = found_services
+            services = found_services[:10]
         
-        if not self.service_list:
-            return None
+        if not services:
+            return "I specialize in digital solutions including web development, digital marketing, and custom software services. Could you be more specific about what you're looking for?"
         
-        response = "**OUR SERVICES**\n\n"
-        response += "NixVixa offers comprehensive digital solutions:\n\n"
+        response = "🚀 **OUR DIGITAL SERVICES**\n\n"
+        response += "At NixVixa, we offer comprehensive digital transformation solutions:\n\n"
         
-        for service in self.service_list[:8]:
-            response += f"• {service}\n"
+        for i, service in enumerate(services[:8], 1):
+            response += f"{i}. **{service.title()}** - Professional {service.lower()} services tailored to your business needs\n"
         
-        response += "\nWe provide end-to-end digital transformation services tailored to your business needs."
+        response += "\n💡 *Each service includes strategy, implementation, and ongoing support.*"
+        response += "\n\nWhich service are you interested in learning more about?"
+        
         return response
     
-    def get_about_response(self):
+    def generate_about_response(self) -> str:
         """Generate company information response"""
-        if not self.company_info:
-            return None
+        about_info = self.structured_data['about']
         
-        response = "**ABOUT NIXVIXA**\n\n"
+        if not about_info:
+            # Look for about information in chunks
+            about_keywords = ['about', 'company', 'mission', 'vision', 'values', 'story', 'team']
+            for chunk in self.chunks:
+                chunk_lower = chunk.lower()
+                if any(keyword in chunk_lower for keyword in about_keywords):
+                    about_info.append(chunk)
         
-        for info in self.company_info[:3]:
-            response += f"{info}\n\n"
+        if not about_info:
+            return "NixVixa is a digital solutions provider specializing in web development, digital marketing, and custom software solutions. We help businesses transform their digital presence and achieve their goals through innovative technology."
         
-        return response.strip()
-    
-    def get_project_response(self):
-        """Generate project portfolio response"""
-        if not self.project_info:
-            return None
+        response = "🏢 **ABOUT NIXVIXA**\n\n"
         
-        response = "**OUR PROJECTS**\n\n"
-        response += "Our project portfolio includes:\n\n"
+        # Use first 3 relevant pieces of information
+        for info in about_info[:3]:
+            response += f"• {info}\n\n"
         
-        for project in self.project_info[:4]:
-            response += f"• {project}\n"
+        response += "🌟 *We're committed to delivering exceptional digital experiences that drive business growth.*"
         
         return response
     
-    def get_contact_response(self):
+    def generate_contact_response(self) -> str:
         """Generate contact information response"""
-        if not self.contact_info:
-            return None
+        contact_info = self.structured_data['contact']
         
-        response = "**CONTACT INFORMATION**\n\n"
+        if not contact_info:
+            # Extract from chunks
+            contact_patterns = [
+                r'email[:\s]*([\w\.-]+@[\w\.-]+\.\w+)',
+                r'phone[:\s]*([\+\d\s\-\(\)]{10,})',
+                r'contact[:\s]*([\w\.-]+@[\w\.-]+\.\w+)',
+                r'call[:\s]*([\+\d\s\-\(\)]{10,})'
+            ]
+            
+            for chunk in self.chunks:
+                for pattern in contact_patterns:
+                    matches = re.findall(pattern, chunk, re.IGNORECASE)
+                    for match in matches:
+                        if match not in contact_info:
+                            contact_info.append(match)
         
-        for contact in self.contact_info[:5]:
-            response += f"• {contact}\n"
+        if not contact_info:
+            contact_info = [
+                "Email: contact@nixvixa.com",
+                "Phone: +1 (555) 123-4567",
+                "Website: https://nixvixa.com"
+            ]
+        
+        response = "📞 **CONTACT NIXVIXA**\n\n"
+        response += "Get in touch with our team:\n\n"
+        
+        for info in contact_info[:5]:
+            response += f"• {info}\n"
+        
+        response += "\n📍 *We're available Monday-Friday, 9AM-6PM EST*"
+        response += "\n\n💬 *You can also schedule a consultation through our website.*"
         
         return response
     
-    def generate_response(self, user_text, top_k=5, min_score=0.15):
+    def generate_project_response(self) -> str:
+        """Generate project portfolio response"""
+        projects = self.structured_data['projects']
+        
+        if not projects:
+            # Extract project-like content from chunks
+            project_keywords = ['project', 'portfolio', 'case study', 'client work', 'success story']
+            for chunk in self.chunks:
+                chunk_lower = chunk.lower()
+                if any(keyword in chunk_lower for keyword in project_keywords):
+                    projects.append(chunk)
+        
+        if not projects:
+            return "We've successfully delivered numerous digital projects across various industries including e-commerce platforms, corporate websites, mobile applications, and digital marketing campaigns. Each project is customized to meet specific client requirements."
+        
+        response = "📁 **OUR PROJECT PORTFOLIO**\n\n"
+        response += "Recent successful projects include:\n\n"
+        
+        for i, project in enumerate(projects[:4], 1):
+            # Clean up project description
+            clean_project = re.sub(r'\s+', ' ', project).strip()
+            if len(clean_project) > 150:
+                clean_project = clean_project[:147] + "..."
+            response += f"{i}. {clean_project}\n\n"
+        
+        response += "🎯 *We deliver tailored solutions that drive measurable results.*"
+        
+        return response
+    
+    def generate_response(self, user_text: str, top_k: int = 5, min_score: float = 0.15) -> str:
+        """Generate a response to user input"""
         text = user_text.lower().strip()
         
-        # Enhanced greetings
-        greetings = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]
+        # Enhanced greeting detection
+        greetings = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening", "hola", "namaste"]
         if any(text.startswith(greet) for greet in greetings):
-            return "Welcome to NixVixa Digital Solutions! I'm here to provide detailed information about our services, projects, and company expertise. How may I assist you today?"
+            return "👋 Hello! Welcome to **NixVixa Digital Solutions**! \n\nI'm your AI assistant, here to provide detailed information about our services, projects, and expertise. \n\nHow can I help you today? You can ask about:\n• Our services\n• Company information\n• Project portfolio\n• Contact details\n• Pricing information"
         
-        # Enhanced farewells
-        farewells = ["bye", "goodbye", "exit", "quit", "see you"]
-        if any(text.startswith(farewell) for farewell in farewells):
-            return "Thank you for contacting NixVixa! We look forward to helping you achieve your digital goals."
+        # Enhanced farewell detection
+        farewells = ["bye", "goodbye", "exit", "quit", "see you", "thanks bye", "thank you bye"]
+        if any(farewell in text for farewell in farewells):
+            return "👋 Thank you for chatting with NixVixa! \n\nWe're here to help transform your digital presence. Feel free to reach out anytime! \n\nHave a great day! 🚀"
+        
+        # Thank you responses
+        if any(phrase in text for phrase in ["thank", "thanks", "appreciate"]):
+            return "You're welcome! 😊 \n\nIs there anything else about NixVixa's services you'd like to know?"
         
         # Service queries
-        service_queries = ['services', 'service', 'offer', 'provide', 'what do you do', 'solutions']
+        service_queries = [
+            'service', 'offer', 'provide', 'what do you do', 'solutions',
+            'web development', 'digital marketing', 'app development', 'branding',
+            'seo', 'social media', 'content creation', 'ai automation'
+        ]
         if any(query in text for query in service_queries):
-            service_response = self.get_service_response()
-            if service_response:
-                return service_response
+            return self.generate_service_response()
         
         # About queries
-        about_queries = ['about', 'company', 'who are you', 'nixvixa', 'story']
+        about_queries = [
+            'about', 'company', 'who are you', 'nixvixa', 'story',
+            'mission', 'vision', 'values', 'team'
+        ]
         if any(query in text for query in about_queries):
-            about_response = self.get_about_response()
-            if about_response:
-                return about_response
+            return self.generate_about_response()
         
         # Project queries
-        project_queries = ['projects', 'portfolio', 'work', 'case studies']
+        project_queries = [
+            'project', 'portfolio', 'work', 'case study',
+            'examples', 'show me your work', 'previous work'
+        ]
         if any(query in text for query in project_queries):
-            project_response = self.get_project_response()
-            if project_response:
-                return project_response
+            return self.generate_project_response()
         
         # Contact queries
-        contact_queries = ['contact', 'email', 'phone', 'address', 'reach', 'call']
+        contact_queries = [
+            'contact', 'email', 'phone', 'address', 'reach',
+            'call', 'location', 'get in touch', 'support'
+        ]
         if any(query in text for query in contact_queries):
-            contact_response = self.get_contact_response()
-            if contact_response:
-                return contact_response
+            return self.generate_contact_response()
         
-        # General query processing
-        results = self.retrieve_top_k(user_text, k=top_k, min_score=min_score)
+        # Pricing queries
+        if any(word in text for word in ['price', 'cost', 'how much', 'pricing', 'fee', 'rate']):
+            return "💰 **PRICING INFORMATION**\n\nOur pricing varies based on project scope, complexity, and requirements. We offer:\n\n• **Custom Quotes** for enterprise solutions\n• **Package Deals** for standard services\n• **Hourly Rates** for consulting\n• **Monthly Retainers** for ongoing support\n\n📊 *For an accurate quote, please share your project details or schedule a consultation.*"
+        
+        # Process general query
+        results = self.retrieve_relevant_chunks(user_text, k=top_k, min_score=min_score)
         
         if not results:
-            return "I specialize in providing information about NixVixa's digital services and solutions. For specific details about our offerings, please visit our website or contact our team directly."
+            # Fallback to structured responses
+            if len(text.split()) < 3:
+                return "🤔 I'd be happy to help! Could you please provide more details about what you're looking for?"
+            
+            return "🔍 I couldn't find specific information about that in our current knowledge base. \n\nHowever, I can help you with:\n• Service information\n• Company details\n• Project examples\n• Contact information\n• Pricing inquiries\n\nPlease try rephrasing your question or ask about one of these topics!"
         
-        # Format professional response
-        response = "Based on our website information:\n\n"
+        # Format response with context
+        response = "🤖 **Based on our website information:**\n\n"
         
-        for chunk, score in results:
+        for idx, (chunk, score) in enumerate(results, 1):
+            # Clean and format chunk
             clean_chunk = re.sub(r'\s+', ' ', chunk).strip()
+            
+            # Add context if we have URL info
+            if chunk in self.content_map:
+                url = self.content_map[chunk]
+                page_name = url.split('/')[-1].replace('-', ' ').title()
+                response += f"**{idx}. From {page_name}:**\n"
+            
+            # Ensure proper punctuation
             if not clean_chunk.endswith(('.', '!', '?')):
                 clean_chunk += '.'
-            response += f"• {clean_chunk}\n"
+            
+            response += f"{clean_chunk}\n\n"
         
-        response += "\nFor comprehensive details, please visit our official website."
+        response += "---\n"
+        response += "📚 *For more detailed information, please visit our website or contact us directly.*"
+        response += "\n\n❓ *Is there anything specific you'd like to know more about?*"
+        
         return response
